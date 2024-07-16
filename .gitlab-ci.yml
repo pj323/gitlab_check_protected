@@ -1,13 +1,15 @@
+stages:
+  - fetch_repos
+
 fetch_repo_details:
   stage: fetch_repos
-  image: python:3.9  # Using a Python image
+  image: python:3.9  # Ensure Python is available
   before_script:
-    - pip install requests  # Install necessary Python package
+    - pip install urllib3  # Although urllib is part of the standard library, urllib3 might be used for enhanced features
   script:
-    - python fetch_repos.py  # Run your Python script
-  artifacts:
-    paths:
-      - repo_details.txt
-    expire_in: 1 week
+    - python fetch_repos.py
+  variables:
+    GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Define this in GitLab's CI/CD settings
+    GITLAB_GROUP_PATH: "Turing"          # Adjust according to your specific group path
   only:
     - master

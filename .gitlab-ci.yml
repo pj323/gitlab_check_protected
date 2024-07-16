@@ -1,36 +1,10 @@
-stages:
-  - fetch_repos
-
-variables:
-  ACCESS_TOKEN: $ACCESS_TOKEN  # Assuming you've stored your access token as a CI/CD variable
-
 fetch_repo_details:
   stage: fetch_repos
+  image: python:3.9  # Using a Python image
+  before_script:
+    - pip install requests  # Install necessary Python package
   script:
-    - |
-      echo "Fetching repository and branch details..."
-      OUTPUT_FILE="repo_details.txt"
-      touch $OUTPUT_FILE
-      GROUP_ID="your_group_id"  # Replace with your specific GitLab group ID
-
-      # Fetch all projects in the specified group
-      PROJECTS=$(curl --header "PRIVATE-TOKEN: $ACCESS_TOKEN" "https://gitlab.com/api/v4/groups/$GROUP_ID/projects?include_subgroups=true")
-
-      # Loop through each project and get details
-      echo "$PROJECTS" | jq -c '.[]' | while read i; do
-        PROJECT_ID=$(echo $i | jq -r '.id')
-        PROJECT_NAME=$(echo $i | jq -r '.name')
-        BRANCHES=$(curl --header "PRIVATE-TOKEN: $ACCESS_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/repository/branches")
-
-        # Check if 'master' or 'main' is protected
-        echo "$BRANCHES" | jq -c '.[]' | while read j; do
-          BRANCH_NAME=$(echo $j | jq -r '.name')
-          IS_PROTECTED=$(echo $j | jq -r '.protected')
-          if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]]; then
-            echo "Repository: $PROJECT_NAME, Branch: $BRANCH_NAME, Protected: $IS_PROTECTED" >> $OUTPUT_FILE
-          fi
-        done
-      done
+    - python fetch_repos.py  # Run your Python script
   artifacts:
     paths:
       - repo_details.txt

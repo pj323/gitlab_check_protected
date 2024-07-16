@@ -1,0 +1,9 @@
+stages:
+  - fetch_repos
+
+fetch_repo_details:
+  stage: fetch_repos
+  script:
+    - ./fetch_repos.sh
+  only:
+    - master

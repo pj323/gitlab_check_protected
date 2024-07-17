@@ -267,3 +267,131 @@ fetch_repo_details:
     - master  # Adjust to your branch strategy as needed
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+stages:
+  - fetch_repos
+
+variables:
+  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Ensure this is defined in your GitLab CI/CD settings
+  GITLAB_GROUP_ID: "your_group_id"    # Ensure this is set to your target GitLab group ID
+
+fetch_repo_details:
+  stage: fetch_repos
+  image: alpine:latest  # Alpine is lightweight and includes essential tools
+  before_script:
+    - apk update && apk add jq curl  # Install jq and curl if not present
+  script:
+    - |
+      BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
+      OUTPUT_FILE="all_projects.json"
+      echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
+
+      fetch_projects() {
+        local group_id=$1
+        local page=$2
+        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+          "${BASE_URL}/groups/${group_id}/projects?include_subgroups=true&per_page=100&page=${page}"
+      }
+
+      fetch_subgroups() {
+        local group_id=$1
+        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+          "${BASE_URL}/groups/${group_id}/subgroups"
+      }
+
+      process_project() {
+        local project=$1
+        local project_id=$(echo $project | jq -r '.id')
+        local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
+
+        local branches_json=$(fetch_branches $project_id)
+        if [[ "$(echo $branches_json | jq .)" == "null" ]]; then
+          echo "Failed to fetch branches for project ID $project_id" >&2
+          return
+        fi
+
+        echo $branches_json | jq -c '.[]' | while read branch; do
+          local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
+          local is_protected=$(echo $branch | jq -r '.protected')
+
+          if [[ "$branch_name" == "master" || "$branch_name" == "main" ]] && [[ "$is_protected" == "true" ]]; then
+            local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
+            echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $OUTPUT_FILE
+          fi
+        done
+      }
+
+      fetch_branches() {
+        local project_id=$1
+        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+          "${BASE_URL}/projects/${project_id}/repository/branches"
+      }
+
+      process_group() {
+        local group_id=$1
+        local page=1
+
+        while :; do
+          local projects_json=$(fetch_projects $group_id $page)
+          if [[ "$(echo $projects_json | jq .)" == "null" ]]; then
+            echo "Failed to fetch projects for group ID $group_id" >&2
+            return
+          fi
+
+          if [ -z "$(echo $projects_json | jq '.[]')" ]; then
+            break
+          fi
+
+          echo $projects_json | jq -c '.[]' | while read project; do
+            process_project "$project"
+          done
+
+          ((page++))
+        done
+
+        local subgroups_json=$(fetch_subgroups $group_id)
+        if [[ "$(echo $subgroups_json | jq .)" == "null" ]]; then
+          echo "Failed to fetch subgroups for group ID $group_id" >&2
+          return
+        fi
+
+        echo $subgroups_json | jq -c '.[]' | while read subgroup; do
+          local subgroup_id=$(echo $subgroup | jq -r '.id')
+          process_group $subgroup_id
+        done
+      }
+
+      process_group $GITLAB_GROUP_ID
+
+  artifacts:
+    paths:
+      - all_projects.json  # Preserve the JSON file as a build artifact
+    expire_in: 1 week
+  only:
+    - master  # Adjust to your branch strategy as needed
+

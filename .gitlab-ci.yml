@@ -156,8 +156,13 @@ fetch_repo_details:
           return
         fi
 
-        local project_id=$(echo $project | jq -r '.id')
-        local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
+        local project_id=$(echo $project | jq -r '.id' 2>/dev/null)
+        local project_name=$(echo $project | jq -r '.name' 2>/dev/null | sed 's/\"/\\\"/g')
+
+        if [[ -z "$project_id" || -z "$project_name" ]]; then
+          echo "Skipping project with missing ID or name"
+          return
+        fi
 
         echo "Processing project: $project_name ($project_id)"
 
@@ -167,14 +172,19 @@ fetch_repo_details:
           return
         fi
 
-        echo $branches_json | jq -c '.[]' | while read branch; do
+        echo $branches_json | jq -c '.[]' 2>/dev/null | while read branch; do
           if [[ -z "$branch" || "$branch" == "null" ]]; then
             echo "Skipping empty or null branch entry"
             return
           fi
 
-          local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
-          local is_protected=$(echo $branch | jq -r '.protected')
+          local branch_name=$(echo $branch | jq -r '.name' 2>/dev/null | sed 's/\"/\\\"/g')
+          local is_protected=$(echo $branch | jq -r '.protected' 2>/dev/null)
+
+          if [[ -z "$branch_name" || -z "$is_protected" ]]; then
+            echo "Skipping branch with missing name or protection status"
+            return
+          fi
 
           if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
             local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
@@ -201,7 +211,7 @@ fetch_repo_details:
             break
           fi
 
-          echo $projects_json | jq -c '.[]' | while read project; do
+          echo $projects_json | jq -c '.[]' 2>/dev/null | while read project; do
             process_project "$project"
           done
 
@@ -215,8 +225,8 @@ fetch_repo_details:
           return
         fi
 
-        echo $subgroups_json | jq -c '.[]' | while read subgroup; do
-          local subgroup_id=$(echo $subgroup | jq -r '.id')
+        echo $subgroups_json | jq -c '.[]' 2>/dev/null | while read subgroup; do
+          local subgroup_id=$(echo $subgroup | jq -r '.id' 2>/dev/null)
           process_group $subgroup_id
         done
       }

@@ -114,7 +114,7 @@ fetch_repo_details:
 
 
 
-- |
+ |
       BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
       PAGE=1
       PER_PAGE=100
@@ -130,48 +130,42 @@ fetch_repo_details:
           "${BASE_URL}/groups/${group_id}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${page}"
       }
 
+      process_project() {
+        local project=$1
+        local project_id=$(echo $project | jq -r '.id')
+        local project_name=$(echo $project | jq -r '.name')
+        local group_name=$(echo $project | jq -r '.namespace.name')
+        
+        echo "Processing project: $project_name (ID: $project_id) in group/subgroup: $group_name"
+        fetch_branches $project_id | jq -c '.[]' | while read branch; do
+          local branch_name=$(echo $branch | jq -r '.name')
+          local is_protected=$(echo $branch | jq -r '.protected')
+          local new_entry="{\"project_name\": \"$project_name\", \"group_name\": \"$group_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
+          echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
+        done 2>/dev/null  # Suppress jq errors
+      }
+
       fetch_branches() {
         local project_id=$1
+        echo "Fetching branches for project ID $project_id"
         curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
           "${BASE_URL}/projects/${project_id}/repository/branches"
       }
 
-      process_project() {
-        local project=$1
-        local project_id=$(echo $project | jq -r '.id')
-        local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
-        local group_name=$(echo $project | jq -r '.namespace.name' | sed 's/\"/\\\"/g')
-        
-        fetch_branches $project_id | jq -c '.[]' | while read branch; do
-          local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
-          local is_protected=$(echo $branch | jq -r '.protected')
-
-          echo "Processing branch: $branch_name for project: $project_name"
-          
-          if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
-            local new_entry="{\"project_name\": \"$project_name\", \"group_name\": \"$group_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-            echo "Adding entry: $new_entry"
-            jq ". + [$new_entry]" $OUTPUT_FILE > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
-          fi
-        done 2>/dev/null
-      }
-
       while :; do
         PROJECTS_JSON=$(fetch_projects $GITLAB_GROUP_ID $PAGE)
-        
-        if [ -z "$(echo $PROJECTS_JSON | jq '.[]')" ]; then
-          echo "No more projects found. Exiting."
+        if [[ "$(echo $PROJECTS_JSON | jq -e '.[]')" == "" ]]; then
+          echo "Invalid JSON or no projects found on page $PAGE, stopping."
           break
         fi
-
         echo $PROJECTS_JSON | jq -c '.[]' | while read project; do
-          echo "Processing project: $(echo $project | jq -r '.name') (Group/Subgroup: $(echo $project | jq -r '.namespace.name'))"
           process_project "$project"
         done
-
         ((PAGE++))
         if [ $PAGE -gt 50 ]; then
           echo "Reached 50 pages limit. Stopping."
           break
         fi
       done
+
+

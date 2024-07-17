@@ -15,41 +15,51 @@ fetch_repo_details:
       BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
       PAGE=1
       PER_PAGE=100
-      echo "[]" > all_projects.json  # Initialize a JSON file to store project details
+      OUTPUT_FILE="all_projects.json"
+      echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
 
-      # Loop through all available pages of projects
+      fetch_projects() {
+        local page=$1
+        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+          "${BASE_URL}/groups/${GITLAB_GROUP_ID}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${page}"
+      }
+
+      process_project() {
+        local project=$1
+        local project_id=$(echo $project | jq -r '.id')
+        local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
+        
+        fetch_branches $project_id | jq -c '.[]' | while read branch; do
+          local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
+          local is_protected=$(echo $branch | jq -r '.protected')
+          
+          if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
+            local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
+            echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $OUTPUT_FILE
+          fi
+        done
+      }
+
+      fetch_branches() {
+        local project_id=$1
+        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+          "${BASE_URL}/projects/${project_id}/repository/branches"
+      }
+
       while :; do
-        # Fetch project data from GitLab API
-        PROJECTS_JSON=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" "${BASE_URL}/groups/${GITLAB_GROUP_ID}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${PAGE}")
-
-        # If no projects are returned, exit the loop
+        PROJECTS_JSON=$(fetch_projects $PAGE)
+        
         if [ -z "$(echo $PROJECTS_JSON | jq '.[]')" ]; then
           break
         fi
-        
-        # Process each project to fetch and analyze branch data
-        echo "$PROJECTS_JSON" | jq -c '.[]' | while read project; do
-          PROJECT_ID=$(echo $project | jq -r '.id')
-          PROJECT_NAME=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
-          
-          # Fetch branch data for the current project
-          BRANCHES_JSON=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" "${BASE_URL}/projects/${PROJECT_ID}/repository/branches")
 
-          # Process each branch to check if it is protected
-          echo "$BRANCHES_JSON" | jq -c '.[]' | while read branch; do
-            BRANCH_NAME=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
-            IS_PROTECTED=$(echo $branch | jq -r '.protected')
-            
-            # Save details of protected branches
-            if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]] && [[ "$IS_PROTECTED" == "true" ]]; then
-              echo "{\"project_name\": \"$PROJECT_NAME\", \"branch_name\": \"$BRANCH_NAME\", \"protected\": $IS_PROTECTED}" >> all_projects.json
-            fi
-          done
+        echo $PROJECTS_JSON | jq -c '.[]' | while read project; do
+          process_project "$project"
         done
 
-        # Increment the page number to fetch the next page
         ((PAGE++))
       done
+
   artifacts:
     paths:
       - all_projects.json  # Preserve the JSON file as a build artifact

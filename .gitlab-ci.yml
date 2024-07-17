@@ -2,12 +2,12 @@ stages:
   - fetch_repos
 
 variables:
-  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Ensure this is defined in your GitLab CI/CD settings
-  GITLAB_GROUP_ID: "your_group_id"    # Ensure this is set to your target GitLab group ID
+  GITLAB_ACCESS_TOKEN: $GITLAB_TOKEN  # Ensure this is defined in your GitLab CI/CD settings
+  GITLAB_GROUP_ID: $GROUP_ID    # Ensure this is set to your target GitLab group ID
 
 fetch_repo_details:
   stage: fetch_repos
-  image: alpine:latest  # Alpine is lightweight and includes essential tools
+  image: $CENTOS  # Alpine is lightweight and includes essential tools
   before_script:
     - apk update && apk add jq curl  # Install jq and curl if not present
   script:
@@ -96,9 +96,11 @@ fetch_repo_details:
   artifacts:
     paths:
       - all_projects.json  # Preserve the JSON file as a build artifact
-    expire_in: 1 week
-  only:
-    - master  # Adjust to your branch strategy as needed
+    tags:
+      - shared
+    except:
+      - pushes
+      - merge_requests
 
 
 
@@ -108,64 +110,5 @@ fetch_repo_details:
 
 
 
-
-
-
-
-
-
- |
-      BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
-      PAGE=1
-      PER_PAGE=100
-      OUTPUT_FILE="all_projects.json"
-      echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
-      echo "Fetching projects and subgroups for group ID $GITLAB_GROUP_ID"
-
-      fetch_projects() {
-        local group_id=$1
-        local page=$2
-        echo "Fetching projects for group ID $group_id, page $page"
-        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
-          "${BASE_URL}/groups/${group_id}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${page}"
-      }
-
-      process_project() {
-        local project=$1
-        local project_id=$(echo $project | jq -r '.id')
-        local project_name=$(echo $project | jq -r '.name')
-        local group_name=$(echo $project | jq -r '.namespace.name')
-        
-        echo "Processing project: $project_name (ID: $project_id) in group/subgroup: $group_name"
-        fetch_branches $project_id | jq -c '.[]' | while read branch; do
-          local branch_name=$(echo $branch | jq -r '.name')
-          local is_protected=$(echo $branch | jq -r '.protected')
-          local new_entry="{\"project_name\": \"$project_name\", \"group_name\": \"$group_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-          echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
-        done 2>/dev/null  # Suppress jq errors
-      }
-
-      fetch_branches() {
-        local project_id=$1
-        echo "Fetching branches for project ID $project_id"
-        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
-          "${BASE_URL}/projects/${project_id}/repository/branches"
-      }
-
-      while :; do
-        PROJECTS_JSON=$(fetch_projects $GITLAB_GROUP_ID $PAGE)
-        if [[ "$(echo $PROJECTS_JSON | jq -e '.[]')" == "" ]]; then
-          echo "Invalid JSON or no projects found on page $PAGE, stopping."
-          break
-        fi
-        echo $PROJECTS_JSON | jq -c '.[]' | while read project; do
-          process_project "$project"
-        done
-        ((PAGE++))
-        if [ $PAGE -gt 50 ]; then
-          echo "Reached 50 pages limit. Stopping."
-          break
-        fi
-      done
 
 

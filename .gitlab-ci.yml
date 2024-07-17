@@ -130,41 +130,37 @@ fetch_repo_details:
   script:
     - |
       BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
+      PAGE=1
+      PER_PAGE=100
       OUTPUT_FILE="all_projects.json"
-      TEMP_FILE="temp_projects.json"
       echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
 
       fetch_projects() {
-        local group_id=$1
-        local page=$2
+        local page=$1
         curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
-          "${BASE_URL}/groups/${group_id}/projects?include_subgroups=true&per_page=100&page=${page}"
-      }
-
-      fetch_subgroups() {
-        local group_id=$1
-        curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
-          "${BASE_URL}/groups/${group_id}/subgroups"
+          "${BASE_URL}/groups/${GITLAB_GROUP_ID}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${page}"
       }
 
       process_project() {
         local project=$1
         local project_id=$(echo $project | jq -r '.id')
         local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
-
+        
+        echo "Processing project: $project_name ($project_id)"
+        
         local branches_json=$(fetch_branches $project_id)
-        if [ -z "$branches_json" ]; then
-          echo "No branches found for project ID $project_id" >&2
+        if [[ "$(echo $branches_json | jq .)" == "null" ]]; then
+          echo "No branches found for project ID $project_id"
           return
         fi
-
+        
         echo $branches_json | jq -c '.[]' | while read branch; do
           local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
           local is_protected=$(echo $branch | jq -r '.protected')
-
+          
           if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
             local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-            echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $TEMP_FILE && mv $TEMP_FILE $OUTPUT_FILE
+            jq ". + [$new_entry]" $OUTPUT_FILE > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
           fi
         done
       }
@@ -175,45 +171,21 @@ fetch_repo_details:
           "${BASE_URL}/projects/${project_id}/repository/branches"
       }
 
-      process_group() {
-        local group_id=$1
-        local page=1
-
-        while :; do
-          local projects_json=$(fetch_projects $group_id $page)
-          if [ -z "$projects_json" ]; then
-            echo "No projects found for group ID $group_id, page $page" >&2
-            break
-          fi
-
-          echo $projects_json | jq -c '.[]' | while read project; do
-            if [[ "$project" == "null" ]]; then
-              echo "Skipping invalid project entry in group ID $group_id" >&2
-              continue
-            fi
-            process_project "$project"
-          done
-
-          ((page++))
-        done
-
-        local subgroups_json=$(fetch_subgroups $group_id)
-        if [ -z "$subgroups_json" ]; then
-          echo "No subgroups found for group ID $group_id" >&2
-          return
+      while :; do
+        echo "Fetching projects for page $PAGE"
+        PROJECTS_JSON=$(fetch_projects $PAGE)
+        
+        if [ -z "$(echo $PROJECTS_JSON | jq '.[]')" ]; then
+          echo "No more projects found. Exiting."
+          break
         fi
 
-        echo $subgroups_json | jq -c '.[]' | while read subgroup; do
-          if [[ "$subgroup" == "null" ]]; then
-            echo "Skipping invalid subgroup entry in group ID $group_id" >&2
-            continue
-          fi
-          local subgroup_id=$(echo $subgroup | jq -r '.id')
-          process_group $subgroup_id
+        echo $PROJECTS_JSON | jq -c '.[]' | while read project; do
+          process_project "$project"
         done
-      }
 
-      process_group $GITLAB_GROUP_ID
+        ((PAGE++))
+      done
 
   artifacts:
     paths:
@@ -221,5 +193,3 @@ fetch_repo_details:
     expire_in: 1 week
   only:
     - master  # Adjust to your branch strategy as needed
-
-

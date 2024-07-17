@@ -228,7 +228,9 @@ fetch_repo_details:
 
         echo $subgroups_json | jq -c '.[]' 2>/dev/null | while read subgroup; do
           local subgroup_id=$(echo $subgroup | jq -r '.id' 2>/dev/null)
-          process_group $subgroup_id
+          if [[ -n "$subgroup_id" ]]; then
+            process_group $subgroup_id
+          fi
         done
       }
 

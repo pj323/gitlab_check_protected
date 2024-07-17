@@ -119,23 +119,22 @@ stages:
   - fetch_repos
 
 variables:
-  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Ensure this is defined in your GitLab CI/CD settings
-  GITLAB_GROUP_ID: "your_group_id"    # Ensure this is set to your target GitLab group ID
-  MAX_PAGES: 50  # Maximum number of pages to fetch
+  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Define in your CI/CD settings
+  GITLAB_GROUP_ID: "your_group_id"    # Set to your target GitLab group ID
+  MAX_PAGES: 50  # Limit pages to prevent endless loops
 
 fetch_repo_details:
   stage: fetch_repos
-  image: alpine:latest  # Alpine is lightweight and includes essential tools
+  image: alpine:latest
   before_script:
-    - apk update && apk add jq curl  # Install jq and curl if not present
+    - apk update && apk add jq curl
   script:
     - |
       BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
       PAGE=1
       PER_PAGE=100
       OUTPUT_FILE="all_projects.json"
-      TEMP_FILE="temp_projects.json"
-      echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
+      echo "[]" > $OUTPUT_FILE
 
       fetch_projects() {
         local group_id=$1
@@ -153,43 +152,25 @@ fetch_repo_details:
       process_project() {
         local project=$1
         if [[ -z "$project" || "$project" == "null" ]]; then
-          echo "Skipping empty or null project entry"
+          echo "Skipping invalid project data"
           return
         fi
 
-        local project_id=$(echo $project | jq -r '.id' 2>/dev/null)
-        local project_name=$(echo $project | jq -r '.name' 2>/dev/null | sed 's/\"/\\\"/g')
+        local project_id=$(echo $project | jq -r '.id // empty')
+        local project_name=$(echo $project | jq -r '.name // empty')
 
         if [[ -z "$project_id" || -z "$project_name" ]]; then
-          echo "Skipping project with missing ID or name"
+          echo "Skipping project due to missing data"
           return
         fi
 
         echo "Processing project: $project_name ($project_id)"
-
-        local branches_json=$(fetch_branches $project_id)
-        if [[ "$(echo $branches_json | jq .)" == "null" ]]; then
-          echo "No branches found for project ID $project_id"
-          return
-        fi
-
-        echo $branches_json | jq -c '.[]' 2>/dev/null | while read branch; do
-          if [[ -z "$branch" || "$branch" == "null" ]]; then
-            echo "Skipping empty or null branch entry"
-            return
-          fi
-
-          local branch_name=$(echo $branch | jq -r '.name' 2>/dev/null | sed 's/\"/\\\"/g')
-          local is_protected=$(echo $branch | jq -r '.protected' 2>/dev/null)
-
-          if [[ -z "$branch_name" || -z "$is_protected" ]]; then
-            echo "Skipping branch with missing name or protection status"
-            return
-          fi
-
+        fetch_branches $project_id | jq -c '.[]' | while read branch; do
+          local branch_name=$(echo $branch | jq -r '.name // empty')
+          local is_protected=$(echo $branch | jq -r '.protected')
           if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
             local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-            jq ". + [$new_entry]" $OUTPUT_FILE > $TEMP_FILE && mv $TEMP_FILE $OUTPUT_FILE
+            jq ". + [$new_entry]" $OUTPUT_FILE > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
           fi
         done
       }
@@ -202,34 +183,30 @@ fetch_repo_details:
 
       process_group() {
         local group_id=$1
-        local page=1
-
-        while [ $page -le $MAX_PAGES ]; do
+        for ((page=1; page<=MAX_PAGES; page++)); do
           echo "Fetching projects for group ID $group_id, page $page"
           local projects_json=$(fetch_projects $group_id $page)
-          if [[ -z "$projects_json" || "$(echo $projects_json | jq .)" == "null" ]]; then
-            echo "No projects found for group ID $group_id, page $page"
+          if [[ -z "$projects_json" || "$projects_json" == "[]" ]]; then
+            echo "No more projects found, stopping"
             break
           fi
-
-          echo $projects_json | jq -c '.[]' 2>/dev/null | while read project; do
+          echo $projects_json | jq -c '.[]' | while read project; do
             process_project "$project"
           done
-
-          ((page++))
         done
 
-        echo "Fetching subgroups for group ID $group_id"
         local subgroups_json=$(fetch_subgroups $group_id)
-        if [[ -z "$subgroups_json" || "$(echo $subgroups_json | jq .)" == "null" ]]; then
+        if [[ -z "$subgroups_json" || "$subgroups_json" == "[]" ]]; then
           echo "No subgroups found for group ID $group_id"
           return
         fi
 
-        echo $subgroups_json | jq -c '.[]' 2>/dev/null | while read subgroup; do
-          local subgroup_id=$(echo $subgroup | jq -r '.id' 2>/dev/null)
+        echo $subgroups_json | jq -c '.[]' | while read subgroup; do
+          local subgroup_id=$(echo $subgroup | jq -r '.id // empty')
           if [[ -n "$subgroup_id" ]]; then
             process_group $subgroup_id
+          else
+            echo "Skipping invalid subgroup data"
           fi
         done
       }
@@ -238,7 +215,7 @@ fetch_repo_details:
 
   artifacts:
     paths:
-      - all_projects.json  # Preserve the JSON file as a build artifact
+      - all_projects.json
     expire_in: 1 week
   only:
-    - master  # Adjust to your branch strategy as needed
+    - master

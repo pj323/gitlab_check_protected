@@ -2,45 +2,47 @@ stages:
   - fetch_repos
 
 variables:
-  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Set in CI/CD settings
-  GITLAB_GROUP_ID: "your_group_id"    # Set in CI/CD settings
+  GITLAB_ACCESS_TOKEN: $ACCESS_TOKEN  # Ensure this is defined in your GitLab CI/CD settings
+  GITLAB_GROUP_ID: "your_group_id"    # Ensure this is set to your target GitLab group ID
 
 fetch_repo_details:
   stage: fetch_repos
-  image: alpine:latest  # Using Alpine for its lightweight nature
+  image: alpine:latest  # Alpine is lightweight and includes essential tools
   before_script:
-    - apk update && apk add jq curl  # Ensure jq and curl are installed
+    - apk update && apk add jq curl  # Install jq and curl if not present
   script:
     - |
       BASE_URL="https://sfgitlab.opr.statefarm.org/api/v4"
       PAGE=1
       PER_PAGE=100
-      echo "[]" > all_projects.json
+      echo "[]" > all_projects.json  # Initialize a JSON file to store project details
 
+      # Loop through all available pages of projects
       while :; do
-        # Fetch projects from the current page
+        # Fetch project data from GitLab API
         PROJECTS_JSON=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" "${BASE_URL}/groups/${GITLAB_GROUP_ID}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${PAGE}")
-        
-        # If no projects are returned, break the loop
+
+        # If no projects are returned, exit the loop
         if [ -z "$(echo $PROJECTS_JSON | jq '.[]')" ]; then
           break
         fi
         
-        # Process each project incrementally
-        echo "$PROJECTS_JSON" | jq -c '.[]' | while read i; do
-          PROJECT_ID=$(echo $i | jq -r '.id')
-          PROJECT_NAME=$(echo $i | jq -r '.name' | sed 's/\"/\\\"/g')
+        # Process each project to fetch and analyze branch data
+        echo "$PROJECTS_JSON" | jq -c '.[]' | while read project; do
+          PROJECT_ID=$(echo $project | jq -r '.id')
+          PROJECT_NAME=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
           
-          # Fetch branches of the project and process each branch
+          # Fetch branch data for the current project
           BRANCHES_JSON=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" "${BASE_URL}/projects/${PROJECT_ID}/repository/branches")
-          echo "$BRANCHES_JSON" | jq -c '.[]' | while read j; do
-            BRANCH_NAME=$(echo $j | jq -r '.name' | sed 's/\"/\\\"/g')
-            IS_PROTECTED=$(echo $j | jq -r '.protected')
+
+          # Process each branch to check if it is protected
+          echo "$BRANCHES_JSON" | jq -c '.[]' | while read branch; do
+            BRANCH_NAME=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
+            IS_PROTECTED=$(echo $branch | jq -r '.protected')
             
-            # Construct JSON entry for each branch
-            if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]]; then
-              NEW_ENTRY="{\"project_name\": \"$PROJECT_NAME\", \"branch_name\": \"$BRANCH_NAME\", \"protected\": $IS_PROTECTED}"
-              echo $(cat all_projects.json | jq ". + [$NEW_ENTRY]") > all_projects.json
+            # Save details of protected branches
+            if [[ "$BRANCH_NAME" == "master" || "$BRANCH_NAME" == "main" ]] && [[ "$IS_PROTECTED" == "true" ]]; then
+              echo "{\"project_name\": \"$PROJECT_NAME\", \"branch_name\": \"$BRANCH_NAME\", \"protected\": $IS_PROTECTED}" >> all_projects.json
             fi
           done
         done
@@ -50,7 +52,7 @@ fetch_repo_details:
       done
   artifacts:
     paths:
-      - all_projects.json  # Save all projects data as an artifact
+      - all_projects.json  # Preserve the JSON file as a build artifact
     expire_in: 1 week
   only:
-    - master  # Specify the branch
+    - master  # Adjust to your branch strategy as needed

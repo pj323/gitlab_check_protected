@@ -121,11 +121,12 @@ fetch_repo_details:
       PER_PAGE=100
       OUTPUT_FILE="all_projects.json"
       echo "[]" > $OUTPUT_FILE  # Initialize a JSON file to store project details
-      echo "Fetching projects for group ID $GITLAB_GROUP_ID"
+      echo "Fetching projects and subgroups for group ID $GITLAB_GROUP_ID"
 
       fetch_projects() {
         local group_id=$1
         local page=$2
+        echo "Fetching projects for group ID $group_id, page $page"
         curl -s --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
           "${BASE_URL}/groups/${group_id}/projects?include_subgroups=true&per_page=${PER_PAGE}&page=${page}"
       }
@@ -140,20 +141,20 @@ fetch_repo_details:
         local project=$1
         local project_id=$(echo $project | jq -r '.id')
         local project_name=$(echo $project | jq -r '.name' | sed 's/\"/\\\"/g')
+        local group_name=$(echo $project | jq -r '.namespace.name' | sed 's/\"/\\\"/g')
         
         fetch_branches $project_id | jq -c '.[]' | while read branch; do
           local branch_name=$(echo $branch | jq -r '.name' | sed 's/\"/\\\"/g')
           local is_protected=$(echo $branch | jq -r '.protected')
           
           if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
-            local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-            echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $OUTPUT_FILE
+            local new_entry="{\"project_name\": \"$project_name\", \"group_name\": \"$group_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
+            jq ". + [$new_entry]" $OUTPUT_FILE > $OUTPUT_FILE.tmp && mv $OUTPUT_FILE.tmp $OUTPUT_FILE
           fi
-        done
+        done 2>/dev/null
       }
 
       while :; do
-        echo "Fetching projects for page $PAGE"
         PROJECTS_JSON=$(fetch_projects $GITLAB_GROUP_ID $PAGE)
         
         if [ -z "$(echo $PROJECTS_JSON | jq '.[]')" ]; then
@@ -162,7 +163,7 @@ fetch_repo_details:
         fi
 
         echo $PROJECTS_JSON | jq -c '.[]' | while read project; do
-          echo "Processing project: $(echo $project | jq -r '.name')"
+          echo "Processing project: $(echo $project | jq -r '.name') (Group/Subgroup: $(echo $project | jq -r '.namespace.name'))"
           process_project "$project"
         done
 

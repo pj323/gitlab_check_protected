@@ -115,8 +115,7 @@ fetch_repo_details:
 
 
 
-
-    stages:
+stages:
   - fetch_repos
 
 variables:
@@ -155,6 +154,7 @@ fetch_repo_details:
 
         local branches_json=$(fetch_branches $project_id)
         if [ -z "$branches_json" ]; then
+          echo "No branches found for project ID $project_id" >&2
           return
         fi
 
@@ -164,7 +164,7 @@ fetch_repo_details:
 
           if [[ "$branch_name" == "master" || "$branch_name" == "main" ]]; then
             local new_entry="{\"project_name\": \"$project_name\", \"branch_name\": \"$branch_name\", \"protected\": $is_protected}"
-            jq ". + [$new_entry]" $OUTPUT_FILE > $TEMP_FILE && mv $TEMP_FILE $OUTPUT_FILE
+            echo $(jq ". + [$new_entry]" $OUTPUT_FILE) > $TEMP_FILE && mv $TEMP_FILE $OUTPUT_FILE
           fi
         done
       }
@@ -182,10 +182,15 @@ fetch_repo_details:
         while :; do
           local projects_json=$(fetch_projects $group_id $page)
           if [ -z "$projects_json" ]; then
+            echo "No projects found for group ID $group_id, page $page" >&2
             break
           fi
 
           echo $projects_json | jq -c '.[]' | while read project; do
+            if [[ "$project" == "null" ]]; then
+              echo "Skipping invalid project entry in group ID $group_id" >&2
+              continue
+            fi
             process_project "$project"
           done
 
@@ -194,10 +199,15 @@ fetch_repo_details:
 
         local subgroups_json=$(fetch_subgroups $group_id)
         if [ -z "$subgroups_json" ]; then
+          echo "No subgroups found for group ID $group_id" >&2
           return
         fi
 
         echo $subgroups_json | jq -c '.[]' | while read subgroup; do
+          if [[ "$subgroup" == "null" ]]; then
+            echo "Skipping invalid subgroup entry in group ID $group_id" >&2
+            continue
+          fi
           local subgroup_id=$(echo $subgroup | jq -r '.id')
           process_group $subgroup_id
         done

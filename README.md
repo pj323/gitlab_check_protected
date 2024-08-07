@@ -103,6 +103,113 @@ Let's consider a practical example where this system is used to manage user logi
 - The Redis Engineer can access the system through the Ingress, using the CaaS API for management tasks such as scaling Redis instances or updating configurations.
 - Tiller automates deployment and scaling processes, ensuring that the Redis service adapts to changing loads.
 
+
+# Team Turing Network Architecture
+
+## Overview
+
+This network architecture diagram illustrates the networking components and their interactions within the distributed caching service managed by Team Turing. It includes components like PCF, BGP, Switch Pairs, MetalLB, and Kubernetes Workers. Below is a detailed breakdown of each component and their interactions.
+
+![Networking Architecture Diagram](path_to_your_network_architecture_diagram_image)
+
+## Components Breakdown
+
+### PCF (Pivotal Cloud Foundry)
+- **Components:**
+  - **Diego:** The container orchestration system used by PCF.
+  - **Req/Resp App:** Applications running on PCF that send requests and receive responses.
+- **Flow:** 
+  - Applications send requests through Diego, which are then routed to the appropriate destination.
+  - Responses are routed back to the applications via Diego.
+
+### IP Core
+- **Function:** Acts as the central routing and switching point for the network traffic.
+- **Flow:** Connects the PCF components to the BGP and Switch Pairs, ensuring proper routing of network traffic.
+
+### BGP (Border Gateway Protocol)
+- **Components:**
+  - **Quagga Instances (0 to 3):** BGP daemons that manage the routing information.
+- **Flow:** 
+  - Quagga instances handle the distribution of routing information between different network segments.
+  - They interact with the IP Core and Switch Pairs to ensure efficient routing.
+
+### Switch Pairs
+- **Function:** Provide redundant switching paths to ensure high availability and fault tolerance.
+- **Components:**
+  - **Switch Pair 1**
+  - **Switch Pair 2**
+- **Flow:** 
+  - Network traffic is routed through these switches to ensure redundancy and load balancing.
+  - They connect the BGP components to the Kubernetes workers.
+
+### MetalLB (Load Balancer for Kubernetes)
+- **Function:** Provides network load balancing for Kubernetes clusters.
+- **Flow:** 
+  - Receives traffic from the Switch Pairs and distributes it across the Kubernetes Worker nodes.
+  - Ensures that the traffic is balanced and routed to the appropriate Redis pods.
+
+### Kubernetes Workers
+- **Components:**
+  - **K8s Worker Nodes:** Nodes in the Kubernetes cluster that run the application pods.
+  - **Redis Pods:** Pods running Redis instances for the distributed caching service.
+- **Flow:** 
+  - MetalLB directs traffic to the appropriate Kubernetes Worker node.
+  - The Worker node routes the traffic to the corresponding Redis pod, which handles the request and processes the data.
+
+## Interaction Flows
+
+### Application Request Flow
+1. **Request Initiation:**
+   - An application running on PCF sends a request through Diego.
+   
+2. **Routing via IP Core:**
+   - The request is routed through the IP Core to the appropriate BGP instance.
+
+3. **BGP Routing:**
+   - Quagga instances within BGP handle the routing information and direct the request to the appropriate Switch Pair.
+
+4. **Switching and Load Balancing:**
+   - Switch Pairs ensure redundancy and load balance the request, routing it towards the Kubernetes Worker nodes.
+
+5. **Load Balancing with MetalLB:**
+   - MetalLB receives the request from the Switch Pairs and distributes it to the appropriate Kubernetes Worker node.
+
+6. **Processing in Kubernetes:**
+   - The Kubernetes Worker node routes the request to the appropriate Redis pod.
+   - The Redis pod processes the request and returns the response.
+
+### Example Scenario: Data Retrieval from Redis Cache
+
+Let's consider a practical example where an application retrieves data from the Redis cache.
+
+1. **Data Request:**
+   - An application running on PCF sends a data retrieval request to the Redis cache.
+
+2. **Request Routing:**
+   - The request is routed through Diego to the IP Core.
+   - The IP Core directs the request to a Quagga instance in the BGP.
+
+3. **BGP Routing:**
+   - The Quagga instance processes the routing information and forwards the request to a Switch Pair.
+
+4. **Switch Pair Handling:**
+   - The Switch Pair ensures the request is balanced and routes it towards MetalLB.
+
+5. **Load Balancing:**
+   - MetalLB distributes the request to the appropriate Kubernetes Worker node.
+
+6. **Redis Pod Processing:**
+   - The Kubernetes Worker node routes the request to the corresponding Redis pod.
+   - The Redis pod retrieves the requested data from the cache and sends the response back.
+
+7. **Response Routing:**
+   - The response follows the reverse path, going from the Redis pod to the Kubernetes Worker node, through MetalLB, the Switch Pair, BGP, IP Core, and finally back to the application via Diego.
+
+## Conclusion
+
+This example demonstrates how the network architecture handles a data retrieval request, ensuring efficient routing, load balancing, and high availability. The architecture supports scalability, fault tolerance, and robust management, making it well-suited for demanding web applications requiring efficient networking solutions.
+
+
 ## Conclusion
 
 This example demonstrates how the distributed caching service handles user login requests, manages session data, and ensures system performance and reliability through continuous monitoring and alerting. The architecture supports scalability, high availability, and robust management, making it well-suited for demanding web applications requiring efficient caching solutions.
